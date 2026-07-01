@@ -70,7 +70,7 @@ var (
 
 var trackedLabels = []string{
 	"needs-review", "blocked", "agent-ready", "autopilot", "in-progress",
-	"bug", "spike", "ux", "design",
+	"bug", "spike", "ux", "design", "no-agent",
 }
 
 func renderStatusText(r msview.StatusReport) {
@@ -146,6 +146,8 @@ func highlightLabels(labels []string) string {
 			style = warn
 		case "agent-ready", "autopilot", "in-progress":
 			style = ok
+		case "no-agent":
+			style = dim
 		}
 		out = append(out, style.Render(want))
 	}
