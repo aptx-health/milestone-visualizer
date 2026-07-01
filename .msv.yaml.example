@@ -1,0 +1,12 @@
+owner: your-org
+repo: your-repo
+milestone: "Milestone Name"
+graph_file: docs/milestones/1.md
+
+# Doctor: which findings should cause a non-zero exit.
+# Values: any | error | warn | info | <rule-name>
+# Rules: pr-issue-mismatch | orphan-pr | issue-missing-from-graph |
+#        graph-node-not-in-milestone | graph-cycle |
+#        blocked-label-without-edge | multiple-open-prs-per-issue
+fail_on:
+  - error
