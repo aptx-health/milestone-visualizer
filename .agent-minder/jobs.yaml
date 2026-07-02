@@ -1,0 +1,20 @@
+jobs:
+    implement-agent-ready:
+        trigger: "label:agent-ready"
+        agent: autopilot
+        description: "Implement agent-ready issues automatically"
+        budget: 5.0
+
+    spike:
+        trigger: "label:spike"
+        agent: spike
+        runtime: claude-code
+        model: opus
+        description: "Research spike issues and post structured findings"
+        budget: 5.0
+
+    weekly-security:
+        schedule: "0 15 * * 3"
+        agent: security-scanner
+        description: "Run weekly security audit and open findings as issues"
+        budget: 3.0
