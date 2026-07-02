@@ -5,6 +5,12 @@ jobs:
         description: "Implement agent-ready issues automatically"
         budget: 5.0
 
+    bug-fix:
+        trigger: "label:bug"
+        agent: bug-fixer
+        description: "Reproduce and fix bugs with regression tests"
+        budget: 5.0
+
     spike:
         trigger: "label:spike"
         agent: spike
