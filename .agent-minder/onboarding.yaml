@@ -1,0 +1,48 @@
+version: 1
+scanned_at: 2026-07-02T21:04:46.635933Z
+inventory:
+    languages:
+        - go
+    package_managers:
+        - go-modules
+    build_files: []
+    ci: []
+    tooling:
+        secrets: ""
+        process: ""
+        containers: ""
+        env: []
+    existing_claude_config:
+        settings_json: false
+        agent_def: false
+        claude_md: false
+context:
+    build_command: "go build ./cmd/msv"
+    test_command: "go test ./..."
+    lint_command: "go vet ./..."
+    test_timeout: "2m"
+    build_timeout: "2m"
+    base_branch: "main"
+    special_instructions: "msv should stay nicely usable for both humans and agents. Keep domain logic pure and testable, preserve machine-readable JSON output, and treat GitHub labels as workflow truth. Upcoming work spans v1-tablestakes, v2-fan-in, and v3-serve: graph-edit formatting, CI, workflow-state label contracts, snapshot/ETag/rate-limit handling, attention queues, merge-order DAGs, msv serve, OVH/Caddy/systemd deployment docs, and optional minder live-agent overlay."
+    tools_needed:
+        - Bash
+        - Read
+        - Edit
+        - Write
+        - Glob
+        - Grep
+        - gh
+        - git
+permissions:
+    allowed_tools:
+        - Bash
+        - Read
+        - Edit
+        - Write
+        - Glob
+        - Grep
+        - gh
+        - git
+validation:
+    status: passed
+    failures: []
