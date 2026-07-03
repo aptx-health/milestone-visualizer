@@ -32,6 +32,33 @@ func TestDoctor_MismatchAndOrphan(t *testing.T) {
 	}
 }
 
+func TestDoctor_MismatchDedupe(t *testing.T) {
+	// PR #888 is cross-wired: branch says issue #869 but Fixes says #871.
+	// Both issues are in the milestone, so the PR is attached to both issue
+	// views. The mismatch is a single underlying problem and must be
+	// reported exactly once.
+	items := []gh.Item{
+		mkIssue(869, "s", "open"),
+		mkIssue(871, "b", "open"),
+		mkPR(888, "cross-wired", "closed", false, false, "agent/issue-869", 871),
+	}
+	status := BuildStatusReport("o", "r", "M", items)
+	rep := Doctor(status, &graph.Graph{Nodes: map[int]graph.Node{}})
+
+	mismatches := 0
+	for _, f := range rep.Findings {
+		if f.Rule == RuleMismatch {
+			mismatches++
+		}
+	}
+	if mismatches != 1 {
+		t.Errorf("expected exactly 1 pr-issue-mismatch finding, got %d: %+v", mismatches, rep.Findings)
+	}
+	if rep.Counts.Error != 1 {
+		t.Errorf("expected error count 1, got %d", rep.Counts.Error)
+	}
+}
+
 func TestDoctor_GraphCoverage(t *testing.T) {
 	items := []gh.Item{
 		mkIssue(1, "in-graph", "open"),
