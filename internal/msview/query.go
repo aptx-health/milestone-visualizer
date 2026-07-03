@@ -2,6 +2,7 @@ package msview
 
 import (
 	"sort"
+	"time"
 
 	"github.com/aptx-health/ms-visualizer/internal/gh"
 	"github.com/aptx-health/ms-visualizer/internal/graph"
@@ -20,10 +21,11 @@ type ReadyIssue struct {
 
 // BlockedInfo lists the still-open predecessors of a given issue.
 type BlockedInfo struct {
-	Number  int          `json:"number"`
-	Title   string       `json:"title"`
-	Blocked bool         `json:"blocked"`
-	By      []BlockedDep `json:"by"`
+	Number    int          `json:"number"`
+	Title     string       `json:"title"`
+	FetchedAt time.Time    `json:"fetched_at"`
+	Blocked   bool         `json:"blocked"`
+	By        []BlockedDep `json:"by"`
 }
 
 type BlockedDep struct {

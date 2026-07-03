@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/aptx-health/ms-visualizer/internal/gh"
 	"github.com/aptx-health/ms-visualizer/internal/graph"
 	"github.com/aptx-health/ms-visualizer/internal/msview"
 )
@@ -28,7 +28,7 @@ func newReadyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			status, g, err := loadStatusAndGraph(ctx, r)
+			status, g, fetchedAt, err := loadStatusAndGraph(ctx, cmd, r)
 			if err != nil {
 				return err
 			}
@@ -36,7 +36,7 @@ func newReadyCmd() *cobra.Command {
 			if asJSON {
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
-				return enc.Encode(map[string]any{"ready": ready, "count": len(ready)})
+				return enc.Encode(map[string]any{"fetched_at": fetchedAt, "ready": ready, "count": len(ready)})
 			}
 			fmt.Println(hdr.Render(fmt.Sprintf("Ready: %d", len(ready))))
 			for _, i := range ready {
@@ -76,11 +76,12 @@ func newBlockedCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			status, g, err := loadStatusAndGraph(ctx, r)
+			status, g, fetchedAt, err := loadStatusAndGraph(ctx, cmd, r)
 			if err != nil {
 				return err
 			}
 			info := msview.BlockedBy(status, g, issueN)
+			info.FetchedAt = fetchedAt
 			if asJSON {
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
@@ -122,28 +123,16 @@ func newOrphansCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			owner, repo, err := gh.ParseOwnerRepo(r.OwnerRepo)
+			snap, err := loadSnapshot(ctx, cmd, r)
 			if err != nil {
 				return err
 			}
-			client, err := gh.NewClient(ctx)
-			if err != nil {
-				return err
-			}
-			msNum, msTitle, err := gh.FindMilestone(ctx, client, owner, repo, r.Milestone)
-			if err != nil {
-				return err
-			}
-			items, err := gh.FetchMilestone(ctx, client, owner, repo, msNum)
-			if err != nil {
-				return err
-			}
-			status := msview.BuildStatusReport(owner, repo, msTitle, items)
+			status := snap.Reports.Status
 			orphans := msview.FindOrphans(status)
 			if asJSON {
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
-				return enc.Encode(map[string]any{"orphans": orphans, "count": len(orphans)})
+				return enc.Encode(map[string]any{"fetched_at": snap.FetchedAt, "orphans": orphans, "count": len(orphans)})
 			}
 			fmt.Println(hdr.Render(fmt.Sprintf("Orphans: %d", len(orphans))))
 			for _, o := range orphans {
@@ -157,41 +146,12 @@ func newOrphansCmd() *cobra.Command {
 	return cmd
 }
 
-// loadStatusAndGraph fetches the milestone and parses the graph file.
-// Shared by ready/blocked/graph. Requires a graph file to be resolvable.
-func loadStatusAndGraph(ctx context.Context, r Resolved) (msview.StatusReport, *graph.Graph, error) {
-	owner, repo, err := gh.ParseOwnerRepo(r.OwnerRepo)
+// loadStatusAndGraph reads the current snapshot and reconstructs the graph
+// shape from the persisted graph report.
+func loadStatusAndGraph(ctx context.Context, cmd *cobra.Command, r Resolved) (msview.StatusReport, *graph.Graph, time.Time, error) {
+	snap, err := loadSnapshot(ctx, cmd, r)
 	if err != nil {
-		return msview.StatusReport{}, nil, err
+		return msview.StatusReport{}, nil, time.Time{}, err
 	}
-	client, err := gh.NewClient(ctx)
-	if err != nil {
-		return msview.StatusReport{}, nil, err
-	}
-	msNum, msTitle, err := gh.FindMilestone(ctx, client, owner, repo, r.Milestone)
-	if err != nil {
-		return msview.StatusReport{}, nil, err
-	}
-	items, err := gh.FetchMilestone(ctx, client, owner, repo, msNum)
-	if err != nil {
-		return msview.StatusReport{}, nil, err
-	}
-	status := msview.BuildStatusReport(owner, repo, msTitle, items)
-
-	if r.GraphFile == "" {
-		return status, &graph.Graph{Nodes: map[int]graph.Node{}}, nil
-	}
-	doc, err := os.ReadFile(r.GraphFile)
-	if err != nil {
-		return status, nil, fmt.Errorf("read graph file: %w", err)
-	}
-	block, err := graph.ExtractBlock(string(doc))
-	if err != nil {
-		return status, nil, fmt.Errorf("parse graph: %w", err)
-	}
-	g, err := graph.Parse(block)
-	if err != nil {
-		return status, nil, err
-	}
-	return status, g, nil
+	return snap.Reports.Status, graphFromReport(snap.Reports.Graph), snap.FetchedAt, nil
 }

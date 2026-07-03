@@ -4,6 +4,8 @@
 // render as text or JSON.
 package msview
 
+import "time"
+
 // LinkStatus classifies why an issue and a PR ended up linked.
 type LinkStatus string
 
@@ -26,13 +28,13 @@ const (
 
 // IssueView is the milestone-level view of an issue plus its linked PRs.
 type IssueView struct {
-	Number    int       `json:"number"`
-	Title     string    `json:"title"`
-	State     string    `json:"state"` // open / closed
-	Labels    []string  `json:"labels"`
-	Assignees []string  `json:"assignees,omitempty"`
-	URL       string    `json:"url"`
-	PRs       []PRLink  `json:"prs,omitempty"`
+	Number    int      `json:"number"`
+	Title     string   `json:"title"`
+	State     string   `json:"state"` // open / closed
+	Labels    []string `json:"labels"`
+	Assignees []string `json:"assignees,omitempty"`
+	URL       string   `json:"url"`
+	PRs       []PRLink `json:"prs,omitempty"`
 }
 
 // PRLink is a PR referenced by an issue via branch name or Fixes ref.
@@ -53,6 +55,7 @@ type StatusReport struct {
 	Owner     string      `json:"owner"`
 	Repo      string      `json:"repo"`
 	Milestone string      `json:"milestone"`
+	FetchedAt time.Time   `json:"fetched_at"`
 	Summary   Summary     `json:"summary"`
 	Issues    []IssueView `json:"issues"`
 	Orphans   []PRLink    `json:"orphans"`
@@ -70,22 +73,22 @@ type Summary struct {
 
 // GraphNodeView augments a graph node with live issue status.
 type GraphNodeView struct {
-	Number   int       `json:"number"`
-	Label    string    `json:"label"`
-	Layer    int       `json:"layer"`
-	InGraph  bool      `json:"in_graph"`
-	InMilestone bool   `json:"in_milestone"`
-	IssueClosed bool   `json:"issue_closed"`
-	Labels   []string  `json:"labels,omitempty"`
-	PR       *PRLink   `json:"pr,omitempty"`
-	Done     bool      `json:"done"`
+	Number      int      `json:"number"`
+	Label       string   `json:"label"`
+	Layer       int      `json:"layer"`
+	InGraph     bool     `json:"in_graph"`
+	InMilestone bool     `json:"in_milestone"`
+	IssueClosed bool     `json:"issue_closed"`
+	Labels      []string `json:"labels,omitempty"`
+	PR          *PRLink  `json:"pr,omitempty"`
+	Done        bool     `json:"done"`
 }
 
 // GraphEdgeView is an edge with live blocked/ready state.
 type GraphEdgeView struct {
-	From    int    `json:"from"`
-	To      int    `json:"to"`
-	State   string `json:"state"` // done | ready | blocked
+	From  int    `json:"from"`
+	To    int    `json:"to"`
+	State string `json:"state"` // done | ready | blocked
 }
 
 // GraphReport is `msv graph --json`.
@@ -93,6 +96,7 @@ type GraphReport struct {
 	Owner     string          `json:"owner"`
 	Repo      string          `json:"repo"`
 	Milestone string          `json:"milestone"`
+	FetchedAt time.Time       `json:"fetched_at"`
 	Layers    [][]int         `json:"layers"`
 	Nodes     []GraphNodeView `json:"nodes"`
 	Edges     []GraphEdgeView `json:"edges"`

@@ -12,17 +12,22 @@ import (
 
 // Item is an issue or PR under a milestone with cross-linkage data.
 type Item struct {
-	Number     int
-	Title      string
-	State      string // open, closed
-	IsPR       bool
-	Merged     bool
-	Draft      bool
-	Labels     []string
-	BranchName string   // PRs only
-	FixesRefs  []int    // issue numbers referenced by "Fixes #N" / "Closes #N" in PR body
-	Assignees  []string
-	URL        string
+	Number     int      `json:"number"`
+	Title      string   `json:"title"`
+	State      string   `json:"state"` // open, closed
+	IsPR       bool     `json:"is_pr"`
+	Merged     bool     `json:"merged"`
+	Draft      bool     `json:"draft"`
+	Labels     []string `json:"labels,omitempty"`
+	BranchName string   `json:"branch_name,omitempty"` // PRs only
+	FixesRefs  []int    `json:"fixes_refs,omitempty"`  // issue numbers referenced by "Fixes #N" / "Closes #N" in PR body
+	Assignees  []string `json:"assignees,omitempty"`
+	URL        string   `json:"url"`
+}
+
+// FetchMeta carries metadata from the API responses used to build a fetch.
+type FetchMeta struct {
+	RateLimitRemaining int `json:"rate_limit_remaining"`
 }
 
 var fixesRE = regexp.MustCompile(`(?i)\b(?:fix(?:es|ed)?|close[sd]?|resolve[sd]?)\s+#(\d+)`)
@@ -61,8 +66,16 @@ func FindMilestone(ctx context.Context, c *github.Client, owner, repo, titleOrNu
 // branch names. PRs generally don't inherit the milestone from their linked
 // issue, so we scan the repo's recent PRs and cross-reference.
 func FetchMilestone(ctx context.Context, c *github.Client, owner, repo string, msNum int) ([]Item, error) {
+	items, _, err := FetchMilestoneWithMeta(ctx, c, owner, repo, msNum)
+	return items, err
+}
+
+// FetchMilestoneWithMeta is FetchMilestone plus API metadata useful for
+// freshness and cost-aware consumers.
+func FetchMilestoneWithMeta(ctx context.Context, c *github.Client, owner, repo string, msNum int) ([]Item, FetchMeta, error) {
 	issueSet := map[int]bool{}
 	items := []Item{}
+	meta := FetchMeta{RateLimitRemaining: -1}
 
 	iopt := &github.IssueListByRepoOptions{
 		Milestone:   strconv.Itoa(msNum),
@@ -72,8 +85,9 @@ func FetchMilestone(ctx context.Context, c *github.Client, owner, repo string, m
 	for {
 		issues, resp, err := c.Issues.ListByRepo(ctx, owner, repo, iopt)
 		if err != nil {
-			return nil, fmt.Errorf("list issues: %w", err)
+			return nil, meta, fmt.Errorf("list issues: %w", err)
 		}
+		meta.RateLimitRemaining = resp.Rate.Remaining
 		for _, is := range issues {
 			if is.IsPullRequest() {
 				continue
@@ -106,8 +120,9 @@ func FetchMilestone(ctx context.Context, c *github.Client, owner, repo string, m
 	for seenPRs < maxPRScan {
 		prs, resp, err := c.PullRequests.List(ctx, owner, repo, popt)
 		if err != nil {
-			return nil, fmt.Errorf("list prs: %w", err)
+			return nil, meta, fmt.Errorf("list prs: %w", err)
 		}
+		meta.RateLimitRemaining = resp.Rate.Remaining
 		for _, pr := range prs {
 			seenPRs++
 			branch := pr.GetHead().GetRef()
@@ -148,7 +163,7 @@ func FetchMilestone(ctx context.Context, c *github.Client, owner, repo string, m
 		}
 		popt.ListOptions.Page = resp.NextPage
 	}
-	return items, nil
+	return items, meta, nil
 }
 
 // BranchIssueNumber extracts the issue number encoded in a PR branch name

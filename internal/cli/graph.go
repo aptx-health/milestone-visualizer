@@ -11,7 +11,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
-	"github.com/aptx-health/ms-visualizer/internal/gh"
 	"github.com/aptx-health/ms-visualizer/internal/graph"
 	"github.com/aptx-health/ms-visualizer/internal/msview"
 )
@@ -29,37 +28,27 @@ func newGraphCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			owner, repo, err := gh.ParseOwnerRepo(r.OwnerRepo)
+			snap, err := loadSnapshot(ctx, cmd, r)
 			if err != nil {
 				return err
 			}
-			client, err := gh.NewClient(ctx)
-			if err != nil {
-				return err
+			report := snap.Reports.Graph
+			if r.GraphFile == "" {
+				doc, err := loadDoc(r.GraphFile)
+				if err != nil {
+					return err
+				}
+				block, err := graph.ExtractBlock(doc)
+				if err != nil {
+					return fmt.Errorf("read graph: %w", err)
+				}
+				g, err := graph.Parse(block)
+				if err != nil {
+					return err
+				}
+				report = msview.BuildGraphReport(snap.Owner, snap.Repo, snap.Milestone, g, snap.Items)
+				report.FetchedAt = snap.FetchedAt
 			}
-			msNum, msTitle, err := gh.FindMilestone(ctx, client, owner, repo, r.Milestone)
-			if err != nil {
-				return err
-			}
-
-			doc, err := loadDoc(r.GraphFile)
-			if err != nil {
-				return err
-			}
-			block, err := graph.ExtractBlock(doc)
-			if err != nil {
-				return fmt.Errorf("read graph: %w", err)
-			}
-			g, err := graph.Parse(block)
-			if err != nil {
-				return err
-			}
-
-			items, err := gh.FetchMilestone(ctx, client, owner, repo, msNum)
-			if err != nil {
-				return err
-			}
-			report := msview.BuildGraphReport(owner, repo, msTitle, g, items)
 
 			if asJSON {
 				enc := json.NewEncoder(os.Stdout)
