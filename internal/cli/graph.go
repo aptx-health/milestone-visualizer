@@ -11,8 +11,10 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
+	"github.com/aptx-health/ms-visualizer/internal/gh"
 	"github.com/aptx-health/ms-visualizer/internal/graph"
 	"github.com/aptx-health/ms-visualizer/internal/msview"
+	"github.com/aptx-health/ms-visualizer/internal/snapshot"
 )
 
 func newGraphCmd() *cobra.Command {
@@ -34,7 +36,7 @@ func newGraphCmd() *cobra.Command {
 			}
 			report := snap.Reports.Graph
 			if r.GraphFile == "" {
-				doc, err := loadDoc(r.GraphFile)
+				doc, err := loadDoc("")
 				if err != nil {
 					return err
 				}
@@ -48,6 +50,15 @@ func newGraphCmd() *cobra.Command {
 				}
 				report = msview.BuildGraphReport(snap.Owner, snap.Repo, snap.Milestone, g, snap.Items)
 				report.FetchedAt = snap.FetchedAt
+				// Persist stdin-sourced graph so subsequent commands (ready, blocked, doctor) see it.
+				snap.Reports.Graph = report
+				snap.Reports.Doctor = msview.Doctor(snap.Reports.Status, g)
+				snap.Reports.Doctor.FetchedAt = snap.FetchedAt
+				snap.Reports.Ready = msview.FindReady(snap.Reports.Status, g, nil)
+				owner, repo, _ := gh.ParseOwnerRepo(r.OwnerRepo)
+				if snapPath, err2 := snapshot.Path(owner, repo, r.Milestone); err2 == nil {
+					_ = snapshot.Save(snapPath, snap)
+				}
 			}
 
 			if asJSON {

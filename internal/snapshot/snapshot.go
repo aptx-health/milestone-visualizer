@@ -7,14 +7,19 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/aptx-health/ms-visualizer/internal/gh"
 	"github.com/aptx-health/ms-visualizer/internal/msview"
 )
 
-const defaultLockPoll = 100 * time.Millisecond
+const (
+	defaultLockPoll = 100 * time.Millisecond
+	lockTimeout     = 30 * time.Second
+)
 
 // Snapshot is the persisted, derived artifact every read-only command renders
 // from. It is safe to delete; the next uncached load recreates it from GitHub.
@@ -78,9 +83,11 @@ func Load(ctx context.Context, path string, opts LoadOptions, fetch FetchFunc) (
 		}
 	}
 
-	unlock, err := lock(ctx, path+".lock")
+	lockCtx, cancel := context.WithTimeout(ctx, lockTimeout)
+	defer cancel()
+	unlock, err := lock(lockCtx, path+".lock")
 	if err != nil {
-		return Snapshot{}, err
+		return Snapshot{}, fmt.Errorf("acquire snapshot lock: %w", err)
 	}
 	defer unlock()
 
@@ -158,12 +165,33 @@ func lock(ctx context.Context, path string) (func(), error) {
 		if !errors.Is(err, os.ErrExist) {
 			return nil, err
 		}
+		if isLockStale(path) {
+			_ = os.Remove(path)
+			continue
+		}
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-time.After(defaultLockPoll):
 		}
 	}
+}
+
+// isLockStale reports whether the process that wrote path is no longer running.
+func isLockStale(path string) bool {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil {
+		return false
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return true
+	}
+	return proc.Signal(syscall.Signal(0)) != nil
 }
 
 func stateDir() (string, error) {
