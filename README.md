@@ -74,6 +74,21 @@ Store this in `docs/milestones/<milestone-number>.md` (or wherever) and
 link from the milestone discussion. Any agent can rewrite the block
 between the sentinels; humans get a rendered diagram on GitHub for free.
 
+### `msv graph-edit fmt [--file docs/milestones/15.md] [--check]`
+
+Rewrites the Mermaid block in **canonical form** — all nodes declared
+first (sorted by number), then bare edges (sorted) — without changing
+anything semantically. Run it after hand-editing a graph doc so your
+first real `graph-edit` mutation produces a clean, minimal diff instead
+of a whole-block rewrite.
+
+- Exits `0` whether or not the file changed.
+- `--check` leaves the file untouched and exits non-zero (`2`) when the
+  doc is not already canonical — suitable for a CI gate.
+
+Other `graph-edit` subcommands (`add-edge`, `rm-edge`, `add-node`,
+`rm-node`) mutate the graph and always write it back canonically.
+
 ## Notes
 
 - Multiple agents on a milestone at once: `status` groups PRs under their
