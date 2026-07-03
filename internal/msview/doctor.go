@@ -49,10 +49,18 @@ func Doctor(status StatusReport, g *graph.Graph) DoctorReport {
 		Milestone: status.Milestone,
 	}
 
-	// 1. PR/issue link mismatches
+	// 1. PR/issue link mismatches. A cross-wired PR is attached to every
+	// issue it claims (branch AND Fixes), so the same underlying mismatch
+	// surfaces once per claimed issue. Dedupe by PR number so a single
+	// mismatched PR yields a single finding.
+	mismatchSeen := map[int]bool{}
 	for _, iv := range status.Issues {
 		for _, p := range iv.PRs {
 			if p.Link == LinkMismatch {
+				if mismatchSeen[p.Number] {
+					continue
+				}
+				mismatchSeen[p.Number] = true
 				report.Findings = append(report.Findings, Finding{
 					Rule:     RuleMismatch,
 					Severity: "error",
