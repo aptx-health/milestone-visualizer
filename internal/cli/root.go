@@ -1,6 +1,10 @@
 package cli
 
-import "github.com/spf13/cobra"
+import (
+	"time"
+
+	"github.com/spf13/cobra"
+)
 
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
@@ -9,6 +13,9 @@ func NewRootCmd() *cobra.Command {
 	}
 	root.PersistentFlags().String("config", "", "path to .msv.yaml (overrides search)")
 	root.PersistentFlags().Bool("quiet", false, "suppress non-essential text (JSON/exit code only)")
+	root.PersistentFlags().Bool("refresh", false, "force a GitHub fetch and update the snapshot")
+	root.PersistentFlags().Bool("cached", false, "render from the snapshot and never fetch")
+	root.PersistentFlags().Duration("snapshot-ttl", 90*time.Second, "snapshot freshness window")
 	root.SilenceUsage = true
 	root.SilenceErrors = true
 	root.AddCommand(newStatusCmd())

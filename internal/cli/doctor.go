@@ -13,9 +13,9 @@ import (
 
 // Exit codes are stable and documented so CI/agents can branch on them.
 const (
-	ExitOK              = 0
-	ExitRuntimeError    = 1
-	ExitLintFindings    = 2 // any findings at all when using default fail-on
+	ExitOK               = 0
+	ExitRuntimeError     = 1
+	ExitLintFindings     = 2 // any findings at all when using default fail-on
 	ExitMismatchDetected = 3 // reserved: doctor detected an error-severity mismatch
 )
 
@@ -33,11 +33,11 @@ func newDoctorCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			status, g, err := loadStatusAndGraph(ctx, r)
+			snap, err := loadSnapshot(ctx, cmd, r)
 			if err != nil {
 				return err
 			}
-			report := msview.Doctor(status, g)
+			report := snap.Reports.Doctor
 
 			if asJSON {
 				enc := json.NewEncoder(os.Stdout)

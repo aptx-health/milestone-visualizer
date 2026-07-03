@@ -3,6 +3,7 @@ package msview
 import (
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/aptx-health/ms-visualizer/internal/graph"
 )
@@ -21,6 +22,7 @@ type DoctorReport struct {
 	Owner     string    `json:"owner"`
 	Repo      string    `json:"repo"`
 	Milestone string    `json:"milestone"`
+	FetchedAt time.Time `json:"fetched_at"`
 	Findings  []Finding `json:"findings"`
 	Counts    struct {
 		Error int `json:"error"`
@@ -31,13 +33,13 @@ type DoctorReport struct {
 
 // Rules the doctor enforces (used for exit-code gating too).
 const (
-	RuleMismatch      = "pr-issue-mismatch"
-	RuleOrphan        = "orphan-pr"
-	RuleGraphMissing  = "issue-missing-from-graph"
-	RuleGraphExtra    = "graph-node-not-in-milestone"
-	RuleCycle         = "graph-cycle"
-	RuleBlockedLabel  = "blocked-label-without-edge"
-	RuleDuplicatePRs  = "multiple-open-prs-per-issue"
+	RuleMismatch     = "pr-issue-mismatch"
+	RuleOrphan       = "orphan-pr"
+	RuleGraphMissing = "issue-missing-from-graph"
+	RuleGraphExtra   = "graph-node-not-in-milestone"
+	RuleCycle        = "graph-cycle"
+	RuleBlockedLabel = "blocked-label-without-edge"
+	RuleDuplicatePRs = "multiple-open-prs-per-issue"
 )
 
 // Doctor runs every lint against the current status + graph and returns
