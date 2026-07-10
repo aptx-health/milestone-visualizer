@@ -54,7 +54,7 @@ func newGraphCmd() *cobra.Command {
 				snap.Reports.Graph = report
 				snap.Reports.Doctor = msview.Doctor(snap.Reports.Status, g)
 				snap.Reports.Doctor.FetchedAt = snap.FetchedAt
-				snap.Reports.Ready = msview.FindReady(snap.Reports.Status, g, nil)
+				snap.Reports.Ready = msview.FindReady(snap.Reports.Status, g, nil, nil)
 				owner, repo, _ := gh.ParseOwnerRepo(r.OwnerRepo)
 				if snapPath, err2 := snapshot.Path(owner, repo, r.Milestone); err2 == nil {
 					_ = snapshot.Save(snapPath, snap)

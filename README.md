@@ -21,8 +21,8 @@ Uses `GITHUB_TOKEN` if set, otherwise falls back to `gh auth token`.
 
 Renders a table of every issue in the milestone: state, tracked labels
 (`needs-review`, `blocked`, `agent-ready`, `autopilot`, `in-progress`, `bug`,
-`spike`, `ux`, `design`), and the PR(s) linked to it via **either** `Fixes #N`
-in the PR body **or** the `agent/issue-N` branch name.
+`spike`, `ux`, `design`, `no-agent`), and the PR(s) linked to it via
+**either** `Fixes #N` in the PR body **or** the `agent/issue-N` branch name.
 
 Flags a **⚠mismatch** when the PR body says `Fixes #A` but the branch is
 `agent/issue-B`. That happened once in the Ripit fitness milestone and it
@@ -51,6 +51,17 @@ Glyph legend:
 - `◑` PR open
 - `◐` PR draft
 - `○` open, no PR yet
+
+### `msv ready <owner>/<repo> --milestone <name-or-number> [--json]`
+
+Lists open, unclaimed issues whose graph dependencies are done, including
+tracked labels in text output and `labels` in JSON. Use `--label <name>` to
+restrict results to matching labels, and repeat `--exclude-label <name>` to
+omit labels such as `no-agent`:
+
+```bash
+msv ready aptx-health/milestone-visualizer -m "v2-fan-in" --exclude-label no-agent --json
+```
 
 ## Dependency-graph format
 

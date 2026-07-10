@@ -41,8 +41,9 @@ type BlockedDep struct {
 //   - are not already claimed (no linked open/draft PR)
 //
 // If restrictToLabels is non-empty, only issues carrying at least one of
-// those labels are returned (case-insensitive).
-func FindReady(status StatusReport, g *graph.Graph, restrictToLabels []string) []ReadyIssue {
+// those labels are returned (case-insensitive). If excludeLabels is non-empty,
+// issues carrying any of those labels are omitted.
+func FindReady(status StatusReport, g *graph.Graph, restrictToLabels, excludeLabels []string) []ReadyIssue {
 	byIssue := indexIssues(status)
 	graphNodes := map[int]bool{}
 	for n := range g.Nodes {
@@ -54,6 +55,7 @@ func FindReady(status StatusReport, g *graph.Graph, restrictToLabels []string) [
 	}
 
 	wantLabel := lowerSet(restrictToLabels)
+	denyLabel := lowerSet(excludeLabels)
 
 	out := []ReadyIssue{}
 	for _, iv := range status.Issues {
@@ -64,6 +66,9 @@ func FindReady(status StatusReport, g *graph.Graph, restrictToLabels []string) [
 			continue
 		}
 		if len(wantLabel) > 0 && !hasAnyLabel(iv.Labels, wantLabel) {
+			continue
+		}
+		if len(denyLabel) > 0 && hasAnyLabel(iv.Labels, denyLabel) {
 			continue
 		}
 		preds := predecessors[iv.Number]
@@ -195,6 +200,9 @@ func hasAnyLabel(labels []string, want map[string]bool) bool {
 func lowerSet(xs []string) map[string]bool {
 	m := map[string]bool{}
 	for _, x := range xs {
+		if x == "" {
+			continue
+		}
 		m[stringsLower(x)] = true
 	}
 	return m
