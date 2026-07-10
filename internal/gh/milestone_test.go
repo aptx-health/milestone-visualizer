@@ -6,20 +6,36 @@ import (
 )
 
 func TestBranchIssueNumber(t *testing.T) {
-	tests := map[string]int{
-		"agent/issue-874":   874,
-		"agent/issue-1":     1,
-		"issue/123":         123,
-		"issue-42":          42,
-		"feature/foo":       0,
-		"":                  0,
-		"agent/ISSUE-999":   999,
-		"prefix/issue-42-x": 42,
+	tests := []struct {
+		name   string
+		branch string
+		want   int
+	}{
+		{"agent issue hyphen", "agent/issue-874", 874},
+		{"agent issue slash", "agent/issue/1", 1},
+		{"bare issue slash", "issue/123", 123},
+		{"bare issue hyphen", "issue-42", 42},
+		{"case insensitive issue", "agent/ISSUE-999", 999},
+		{"nested issue", "prefix/issue-42-x", 42},
+		{"fix numeric prefix", "fix/1-doctor-dedupe", 1},
+		{"feat numeric prefix", "feat/17-graph-edit-fmt", 17},
+		{"nested conventional numeric prefix", "user/chore/123-cleanup", 123},
+		{"docs numeric prefix", "docs/456-update-readme", 456},
+		{"refactor numeric prefix", "refactor/77-split-package", 77},
+		{"perf numeric prefix", "perf/88-cache-status", 88},
+		{"test numeric prefix", "test/99-branch-parser", 99},
+		{"empty", "", 0},
+		{"no issue", "feature/foo", 0},
+		{"missing hyphen after number", "fix/123abc", 0},
+		{"version segment", "release/2.0", 0},
+		{"numeric prefix without conventional type", "feature/123-add-widget", 0},
 	}
-	for in, want := range tests {
-		if got := BranchIssueNumber(in); got != want {
-			t.Errorf("BranchIssueNumber(%q) = %d, want %d", in, got, want)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := BranchIssueNumber(tt.branch); got != tt.want {
+				t.Errorf("BranchIssueNumber(%q) = %d, want %d", tt.branch, got, tt.want)
+			}
+		})
 	}
 }
 
