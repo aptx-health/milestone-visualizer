@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/go-github/v72/github"
 )
@@ -216,4 +217,47 @@ func assigneeLogins(users []*github.User) []string {
 		out = append(out, u.GetLogin())
 	}
 	return out
+}
+
+// MilestoneInfo carries summary data about a milestone.
+type MilestoneInfo struct {
+	Number       int     `json:"number"`
+	Title        string  `json:"title"`
+	State        string  `json:"state"`
+	OpenIssues   int     `json:"open_issues"`
+	ClosedIssues int     `json:"closed_issues"`
+	DueOn        *string `json:"due_on,omitempty"`
+	Description  string  `json:"description,omitempty"`
+}
+
+// ListMilestones fetches all milestones for a repo with open/closed issue counts.
+func ListMilestones(ctx context.Context, c *github.Client, owner, repo string, state string) ([]MilestoneInfo, error) {
+	if state == "" {
+		state = "all"
+	}
+	list, _, err := c.Issues.ListMilestones(ctx, owner, repo, &github.MilestoneListOptions{
+		State:       state,
+		Direction:   "asc",
+		ListOptions: github.ListOptions{PerPage: 100},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list milestones: %w", err)
+	}
+	out := make([]MilestoneInfo, 0, len(list))
+	for _, m := range list {
+		info := MilestoneInfo{
+			Number:       m.GetNumber(),
+			Title:        m.GetTitle(),
+			State:        m.GetState(),
+			OpenIssues:   m.GetOpenIssues(),
+			ClosedIssues: m.GetClosedIssues(),
+			Description:  m.GetDescription(),
+		}
+		if m.DueOn != nil {
+			d := m.DueOn.Time.Format(time.RFC3339)
+			info.DueOn = &d
+		}
+		out = append(out, info)
+	}
+	return out, nil
 }

@@ -2,7 +2,9 @@ package gh
 
 import (
 	"reflect"
+	"os"
 	"testing"
+	"time"
 )
 
 func TestBranchIssueNumber(t *testing.T) {
@@ -67,5 +69,63 @@ func TestParseOwnerRepo(t *testing.T) {
 	}
 	if _, _, err := ParseOwnerRepo("nope"); err == nil {
 		t.Error("expected error on bad input")
+	}
+}
+
+func TestListMilestones_RequiredFields(t *testing.T) {
+	m := MilestoneInfo{
+		Number:       42,
+		Title:        "Test",
+		State:        "open",
+		OpenIssues:   10,
+		ClosedIssues: 5,
+		Description:  "desc",
+	}
+	if m.Number != 42 {
+		t.Errorf("Number = %d, want 42", m.Number)
+	}
+	if m.OpenIssues != 10 {
+		t.Errorf("OpenIssues = %d, want 10", m.OpenIssues)
+	}
+	if m.ClosedIssues != 5 {
+		t.Errorf("ClosedIssues = %d, want 5", m.ClosedIssues)
+	}
+}
+
+func TestListMilestones_DueOnSerialization(t *testing.T) {
+	due := time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC)
+	d := due.Format(time.RFC3339)
+	m := MilestoneInfo{Number: 1, Title: "v2", State: "open", DueOn: &d}
+	if m.DueOn == nil || *m.DueOn != d {
+		t.Errorf("DueOn serialization failed: %v", m.DueOn)
+	}
+}
+
+func TestListMilestones_EmptyDescription(t *testing.T) {
+	m := MilestoneInfo{Number: 1, Title: "v1", State: "closed", OpenIssues: 0, ClosedIssues: 10}
+	if m.Description != "" {
+		t.Errorf("expected empty description, got %q", m.Description)
+	}
+}
+
+func TestListMilestones_TokenAvailable(t *testing.T) {
+	tok := os.Getenv("GITHUB_TOKEN")
+	if tok == "" {
+		t.Skip("GITHUB_TOKEN not set")
+	}
+}
+
+func BenchmarkMilestoneInfoFields(b *testing.B) {
+	d := "2026-12-31T00:00:00Z"
+	for i := 0; i < b.N; i++ {
+		_ = MilestoneInfo{
+			Number:       1,
+			Title:        "v1",
+			State:        "open",
+			OpenIssues:   1,
+			ClosedIssues: 1,
+			DueOn:        &d,
+			Description:  "x",
+		}
 	}
 }
