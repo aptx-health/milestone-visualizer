@@ -20,19 +20,21 @@ func newGraph(edges ...[2]int) *graph.Graph {
 func TestFindReady_NoDepsAndUnblocked(t *testing.T) {
 	items := []gh.Item{
 		mkIssue(1, "root a", "closed", "agent-ready"),
-		mkIssue(2, "root b", "open", "agent-ready"),      // no deps → ready
-		mkIssue(3, "child of 1", "open", "agent-ready"),  // 1 is closed → unblocked
-		mkIssue(4, "child of 2", "open", "agent-ready"),  // 2 open → blocked
+		mkIssue(2, "root b", "open", "agent-ready"),     // no deps → ready
+		mkIssue(3, "child of 1", "open", "agent-ready"), // 1 is closed → unblocked
+		mkIssue(4, "child of 2", "open", "agent-ready"), // 2 open → blocked
 		mkIssue(5, "already-worked", "open", "agent-ready"),
 		mkPR(50, "pr for 5", "open", false, false, "agent/issue-5"),
 	}
 	g := newGraph([2]int{1, 3}, [2]int{2, 4})
 	status := BuildStatusReport("o", "r", "M", items)
-	ready := FindReady(status, g, nil)
+	ready := FindReady(status, g, nil, nil)
 
 	got := map[int]string{}
+	gotLabels := map[int][]string{}
 	for _, r := range ready {
 		got[r.Number] = r.Reason
+		gotLabels[r.Number] = r.Labels
 	}
 	if got[2] != "no-deps" {
 		t.Errorf("issue 2 should be no-deps ready, got %+v", ready)
@@ -46,6 +48,9 @@ func TestFindReady_NoDepsAndUnblocked(t *testing.T) {
 	if _, in := got[5]; in {
 		t.Errorf("issue 5 has an open PR, should not be ready")
 	}
+	if len(gotLabels[2]) != 1 || gotLabels[2][0] != "agent-ready" {
+		t.Errorf("issue 2 labels should be surfaced, got %+v", gotLabels[2])
+	}
 }
 
 func TestFindReady_LabelFilter(t *testing.T) {
@@ -54,9 +59,22 @@ func TestFindReady_LabelFilter(t *testing.T) {
 		mkIssue(2, "b", "open", "agent-ready"),
 	}
 	status := BuildStatusReport("o", "r", "M", items)
-	ready := FindReady(status, newGraph(), []string{"agent-ready"})
+	ready := FindReady(status, newGraph(), []string{"agent-ready"}, nil)
 	if len(ready) != 1 || ready[0].Number != 2 {
 		t.Errorf("label filter failed: %+v", ready)
+	}
+}
+
+func TestFindReady_ExcludeLabelFilter(t *testing.T) {
+	items := []gh.Item{
+		mkIssue(1, "human only", "open", "agent-ready", "no-agent"),
+		mkIssue(2, "agent work", "open", "agent-ready"),
+		mkIssue(3, "bug", "open", "bug"),
+	}
+	status := BuildStatusReport("o", "r", "M", items)
+	ready := FindReady(status, newGraph(), []string{"agent-ready"}, []string{"NO-AGENT"})
+	if len(ready) != 1 || ready[0].Number != 2 {
+		t.Errorf("exclude label filter failed: %+v", ready)
 	}
 }
 

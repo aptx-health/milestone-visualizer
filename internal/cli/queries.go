@@ -18,6 +18,7 @@ func newReadyCmd() *cobra.Command {
 	var milestone, file string
 	var asJSON bool
 	var labels []string
+	var excludeLabels []string
 	cmd := &cobra.Command{
 		Use:   "ready [<owner>/<repo>]",
 		Short: "List issues that are unblocked and ready to pick up",
@@ -32,7 +33,7 @@ func newReadyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ready := msview.FindReady(status, g, labels)
+			ready := msview.FindReady(status, g, labels, excludeLabels)
 			if asJSON {
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
@@ -40,10 +41,7 @@ func newReadyCmd() *cobra.Command {
 			}
 			fmt.Println(hdr.Render(fmt.Sprintf("Ready: %d", len(ready))))
 			for _, i := range ready {
-				fmt.Printf("  %s  %s  %s\n",
-					ok.Render(fmt.Sprintf("#%d", i.Number)),
-					truncate(i.Title, 60),
-					dim.Render(i.Reason))
+				fmt.Println(formatReadyRow(i))
 			}
 			return nil
 		},
@@ -52,7 +50,16 @@ func newReadyCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&file, "file", "f", "", "graph markdown file")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON")
 	cmd.Flags().StringSliceVarP(&labels, "label", "l", nil, "restrict to issues carrying at least one of these labels")
+	cmd.Flags().StringArrayVar(&excludeLabels, "exclude-label", nil, "exclude issues carrying this label (repeatable)")
 	return cmd
+}
+
+func formatReadyRow(i msview.ReadyIssue) string {
+	return fmt.Sprintf("  %s  %s  %s  %s",
+		ok.Render(fmt.Sprintf("#%d", i.Number)),
+		truncate(i.Title, 60),
+		highlightLabels(i.Labels),
+		dim.Render(i.Reason))
 }
 
 func newBlockedCmd() *cobra.Command {

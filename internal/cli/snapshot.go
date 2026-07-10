@@ -81,7 +81,7 @@ func fetchSnapshot(ctx context.Context, owner, repo string, r Resolved) (snapsho
 	graphReport.FetchedAt = fetchedAt
 	doctor := msview.Doctor(status, g)
 	doctor.FetchedAt = fetchedAt
-	ready := msview.FindReady(status, g, nil)
+	ready := msview.FindReady(status, g, nil, nil)
 	orphans := msview.FindOrphans(status)
 	graphSource, err := graphSource(r)
 	if err != nil {
@@ -129,7 +129,7 @@ func ensureGraphSource(s snapshot.Snapshot, r Resolved) (snapshot.Snapshot, bool
 	s.Reports = snapshot.ComputedReports{
 		Status:  status,
 		Graph:   graphReport,
-		Ready:   msview.FindReady(status, g, nil),
+		Ready:   msview.FindReady(status, g, nil, nil),
 		Orphans: msview.FindOrphans(status),
 		Doctor:  doctor,
 	}

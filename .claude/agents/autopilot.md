@@ -33,7 +33,7 @@ Implement one focused GitHub issue for `msv`, a Go CLI for milestone visibility 
 
 ## Workflow
 
-1. Read the issue body, comments, labels, milestone, and linked PRs with `gh`. Respect `no-agent`; do not implement those issues.
+1. Read the issue body, comments, labels, milestone, and linked PRs with `gh`. Respect `no-agent`; do not implement those issues. When selecting work from `msv ready`, use `--exclude-label no-agent`.
 2. Confirm acceptance criteria and milestone context. Current roadmap:
    - `v1-tablestakes`: `graph-edit fmt`, GitHub Actions CI, msv skill, agent-minder setup, duplicate doctor mismatch bug.
    - `v2-fan-in`: workflow-state labels, snapshot layer, ETag/rate-limit surfacing, attention queue, multi-repo rollup, DAG merge order.
