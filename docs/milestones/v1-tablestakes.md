@@ -13,6 +13,8 @@ flowchart LR
   4[#4 msv agent skill]
   5[#5 GitHub Actions CI]
   17[#17 graph-edit fmt]
+  23[#23 ready: labels + no-agent filter]
+  24[#24 branch linkage regex]
   3 --> 1
   3 --> 5
   3 --> 17
