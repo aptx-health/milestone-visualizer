@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/go-github/v72/github"
 )
@@ -27,7 +28,10 @@ type Item struct {
 
 // FetchMeta carries metadata from the API responses used to build a fetch.
 type FetchMeta struct {
-	RateLimitRemaining int `json:"rate_limit_remaining"`
+	RateLimitRemaining int       `json:"rate_limit_remaining"`
+	RateLimitReset     time.Time `json:"rate_limit_reset,omitempty"`
+	RateLimitLimit     int       `json:"rate_limit_limit,omitempty"`
+	RateLimitUsed      int       `json:"rate_limit_used,omitempty"`
 }
 
 var fixesRE = regexp.MustCompile(`(?i)\b(?:fix(?:es|ed)?|close[sd]?|resolve[sd]?)\s+#(\d+)`)
@@ -72,6 +76,11 @@ func FetchMilestone(ctx context.Context, c *github.Client, owner, repo string, m
 
 // FetchMilestoneWithMeta is FetchMilestone plus API metadata useful for
 // freshness and cost-aware consumers.
+//
+// Conditional-request caching is handled transparently by the client's
+// transport (see NewClientWithCache): a 304 Not Modified is replayed from the
+// cached body before it reaches this function, so pagination and PR relevance
+// are always computed against complete, current data.
 func FetchMilestoneWithMeta(ctx context.Context, c *github.Client, owner, repo string, msNum int) ([]Item, FetchMeta, error) {
 	issueSet := map[int]bool{}
 	items := []Item{}
@@ -87,7 +96,7 @@ func FetchMilestoneWithMeta(ctx context.Context, c *github.Client, owner, repo s
 		if err != nil {
 			return nil, meta, fmt.Errorf("list issues: %w", err)
 		}
-		meta.RateLimitRemaining = resp.Rate.Remaining
+		updateRateMeta(&meta, resp)
 		for _, is := range issues {
 			if is.IsPullRequest() {
 				continue
@@ -122,7 +131,7 @@ func FetchMilestoneWithMeta(ctx context.Context, c *github.Client, owner, repo s
 		if err != nil {
 			return nil, meta, fmt.Errorf("list prs: %w", err)
 		}
-		meta.RateLimitRemaining = resp.Rate.Remaining
+		updateRateMeta(&meta, resp)
 		for _, pr := range prs {
 			seenPRs++
 			branch := pr.GetHead().GetRef()
@@ -164,6 +173,16 @@ func FetchMilestoneWithMeta(ctx context.Context, c *github.Client, owner, repo s
 		popt.ListOptions.Page = resp.NextPage
 	}
 	return items, meta, nil
+}
+
+func updateRateMeta(meta *FetchMeta, resp *github.Response) {
+	if resp == nil {
+		return
+	}
+	meta.RateLimitRemaining = resp.Rate.Remaining
+	meta.RateLimitReset = resp.Rate.Reset.Time
+	meta.RateLimitLimit = resp.Rate.Limit
+	meta.RateLimitUsed = resp.Rate.Used
 }
 
 // BranchIssueNumber extracts the issue number encoded in a PR branch name

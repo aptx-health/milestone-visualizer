@@ -15,7 +15,7 @@ func TestLoadUsesFreshSnapshotWithoutFetching(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := Load(context.Background(), path, LoadOptions{TTL: time.Minute}, func(context.Context) (Snapshot, error) {
+	got, err := Load(context.Background(), path, LoadOptions{TTL: time.Minute}, func(context.Context, Snapshot) (Snapshot, error) {
 		t.Fatal("fetch should not be called")
 		return Snapshot{}, nil
 	})
@@ -35,8 +35,11 @@ func TestLoadRefreshesStaleSnapshot(t *testing.T) {
 	}
 
 	calls := 0
-	got, err := Load(context.Background(), path, LoadOptions{TTL: time.Second}, func(context.Context) (Snapshot, error) {
+	got, err := Load(context.Background(), path, LoadOptions{TTL: time.Second}, func(_ context.Context, previous Snapshot) (Snapshot, error) {
 		calls++
+		if previous.Owner != "old" {
+			t.Fatalf("previous owner = %q, want old", previous.Owner)
+		}
 		return Snapshot{FetchedAt: time.Now().UTC(), Owner: "new"}, nil
 	})
 	if err != nil {
@@ -52,7 +55,7 @@ func TestLoadRefreshesStaleSnapshot(t *testing.T) {
 
 func TestLoadCachedModeNeverFetches(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing.json")
-	_, err := Load(context.Background(), path, LoadOptions{Cached: true}, func(context.Context) (Snapshot, error) {
+	_, err := Load(context.Background(), path, LoadOptions{Cached: true}, func(context.Context, Snapshot) (Snapshot, error) {
 		t.Fatal("fetch should not be called")
 		return Snapshot{}, nil
 	})
@@ -79,7 +82,7 @@ func TestLoadRejectsConflictingModes(t *testing.T) {
 	_, err := Load(context.Background(), filepath.Join(t.TempDir(), "snap.json"), LoadOptions{
 		Refresh: true,
 		Cached:  true,
-	}, func(context.Context) (Snapshot, error) {
+	}, func(context.Context, Snapshot) (Snapshot, error) {
 		return Snapshot{}, nil
 	})
 	if err == nil {

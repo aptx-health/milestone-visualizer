@@ -40,6 +40,8 @@ const (
 	RuleCycle        = "graph-cycle"
 	RuleBlockedLabel = "blocked-label-without-edge"
 	RuleDuplicatePRs = "multiple-open-prs-per-issue"
+	RuleRateLow      = "github-rate-limit-low"
+	RuleRateBurnHigh = "github-rate-limit-burn-high"
 )
 
 // Doctor runs every lint against the current status + graph and returns
@@ -191,6 +193,8 @@ func Doctor(status StatusReport, g *graph.Graph) DoctorReport {
 		}
 	}
 
+	addRateLimitFindings(&report, status)
+
 	// Tally counts and stable-sort findings.
 	sort.SliceStable(report.Findings, func(i, j int) bool {
 		return sevRank(report.Findings[i].Severity) < sevRank(report.Findings[j].Severity)
@@ -206,6 +210,54 @@ func Doctor(status StatusReport, g *graph.Graph) DoctorReport {
 		}
 	}
 	return report
+}
+
+func addRateLimitFindings(report *DoctorReport, status StatusReport) {
+	budget := status.RateLimit
+	if budget.Limit == 0 && budget.Reset.IsZero() && budget.Remaining == 0 {
+		return
+	}
+	if budget.Remaining >= 0 && budget.Remaining <= 500 {
+		report.Findings = append(report.Findings, Finding{
+			Rule:     RuleRateLow,
+			Severity: "info",
+			Message:  fmt.Sprintf("GitHub API budget is low: %d requests remain before reset", budget.Remaining),
+		})
+	}
+	if budget.Limit <= 0 || budget.Reset.IsZero() || budget.Remaining < 0 {
+		return
+	}
+	now := status.FetchedAt
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if !budget.Reset.After(now) {
+		return
+	}
+	used := budget.Used
+	if used == 0 {
+		used = budget.Limit - budget.Remaining
+	}
+	if used <= 0 {
+		return
+	}
+	windowStart := budget.Reset.Add(-time.Hour)
+	elapsed := now.Sub(windowStart).Minutes()
+	remainingWindow := budget.Reset.Sub(now).Minutes()
+	if elapsed < 5 || remainingWindow <= 0 {
+		return
+	}
+	burnPerMinute := float64(used) / elapsed
+	sustainablePerMinute := float64(budget.Remaining) / remainingWindow
+	if burnPerMinute > sustainablePerMinute && budget.Remaining < budget.Limit/2 {
+		report.Findings = append(report.Findings, Finding{
+			Rule:     RuleRateBurnHigh,
+			Severity: "info",
+			Message: fmt.Sprintf(
+				"GitHub API budget burn is high: %.1f requests/min used with %d remaining until reset",
+				burnPerMinute, budget.Remaining),
+		})
+	}
 }
 
 func sevRank(s string) int {

@@ -38,17 +38,18 @@ func loadSnapshot(ctx context.Context, cmd *cobra.Command, r Resolved) (snapshot
 	if err != nil {
 		return snapshot.Snapshot{}, err
 	}
-	snap, err := snapshot.Load(ctx, path, opts, func(ctx context.Context) (snapshot.Snapshot, error) {
-		return fetchSnapshot(ctx, owner, repo, r)
+	snap, err := snapshot.Load(ctx, path, opts, func(ctx context.Context, previous snapshot.Snapshot) (snapshot.Snapshot, error) {
+		return fetchSnapshot(ctx, owner, repo, r, previous)
 	})
 	if err != nil {
 		return snapshot.Snapshot{}, err
 	}
+	snap, metadataChanged := hydrateSnapshotReports(snap)
 	snap, changed, err := ensureGraphSource(snap, r)
 	if err != nil {
 		return snapshot.Snapshot{}, err
 	}
-	if changed {
+	if metadataChanged || changed {
 		if err := snapshot.Save(path, snap); err != nil {
 			return snapshot.Snapshot{}, err
 		}
@@ -56,23 +57,53 @@ func loadSnapshot(ctx context.Context, cmd *cobra.Command, r Resolved) (snapshot
 	return snap, nil
 }
 
-func fetchSnapshot(ctx context.Context, owner, repo string, r Resolved) (snapshot.Snapshot, error) {
-	client, err := gh.NewClient(ctx)
+func hydrateSnapshotReports(s snapshot.Snapshot) (snapshot.Snapshot, bool) {
+	rateLimit := rateLimitFromSnapshot(s)
+	if rateLimit.Remaining == 0 && s.RateLimitRemaining != 0 {
+		rateLimit.Remaining = s.RateLimitRemaining
+	}
+	if s.Reports.Status.RateLimit == rateLimit {
+		return s, false
+	}
+	s.Reports.Status.RateLimit = rateLimit
+	s.Reports.Doctor = msview.Doctor(s.Reports.Status, graphFromReport(s.Reports.Graph))
+	s.Reports.Doctor.FetchedAt = s.FetchedAt
+	return s, true
+}
+
+func fetchSnapshot(ctx context.Context, owner, repo string, r Resolved, previous snapshot.Snapshot) (snapshot.Snapshot, error) {
+	client, cache, err := gh.NewClientWithCache(ctx, previous.Metadata.HTTPCache)
 	if err != nil {
 		return snapshot.Snapshot{}, err
 	}
-	msNum, msTitle, err := gh.FindMilestone(ctx, client, owner, repo, r.Milestone)
-	if err != nil {
-		return snapshot.Snapshot{}, err
+	msNum, msTitle := previous.MilestoneNumber, previous.Milestone
+	if msNum == 0 {
+		var err error
+		msNum, msTitle, err = gh.FindMilestone(ctx, client, owner, repo, r.Milestone)
+		if err != nil {
+			return snapshot.Snapshot{}, err
+		}
 	}
 	items, meta, err := gh.FetchMilestoneWithMeta(ctx, client, owner, repo, msNum)
 	if err != nil {
 		return snapshot.Snapshot{}, err
 	}
+	if remaining, reset, limit, used := cache.RateLimit(); remaining >= 0 {
+		meta.RateLimitRemaining = remaining
+		meta.RateLimitReset = reset
+		meta.RateLimitLimit = limit
+		meta.RateLimitUsed = used
+	}
 
 	fetchedAt := time.Now().UTC()
 	status := msview.BuildStatusReport(owner, repo, msTitle, items)
 	status.FetchedAt = fetchedAt
+	status.RateLimit = msview.RateLimit{
+		Remaining: meta.RateLimitRemaining,
+		Reset:     meta.RateLimitReset,
+		Limit:     meta.RateLimitLimit,
+		Used:      meta.RateLimitUsed,
+	}
 	g, err := graphFromResolved(r)
 	if err != nil {
 		return snapshot.Snapshot{}, err
@@ -96,7 +127,16 @@ func fetchSnapshot(ctx context.Context, owner, repo string, r Resolved) (snapsho
 		MilestoneNumber:    msNum,
 		GraphSource:        graphSource,
 		RateLimitRemaining: meta.RateLimitRemaining,
-		Items:              items,
+		Metadata: snapshot.Metadata{
+			HTTPCache: cache.Entries(),
+			RateLimit: snapshot.RateLimitMeta{
+				Remaining: meta.RateLimitRemaining,
+				Reset:     meta.RateLimitReset,
+				Limit:     meta.RateLimitLimit,
+				Used:      meta.RateLimitUsed,
+			},
+		},
+		Items: items,
 		Reports: snapshot.ComputedReports{
 			Status:  status,
 			Graph:   graphReport,
@@ -121,6 +161,7 @@ func ensureGraphSource(s snapshot.Snapshot, r Resolved) (snapshot.Snapshot, bool
 	}
 	status := msview.BuildStatusReport(s.Owner, s.Repo, s.Milestone, s.Items)
 	status.FetchedAt = s.FetchedAt
+	status.RateLimit = rateLimitFromSnapshot(s)
 	graphReport := msview.BuildGraphReport(s.Owner, s.Repo, s.Milestone, g, s.Items)
 	graphReport.FetchedAt = s.FetchedAt
 	doctor := msview.Doctor(status, g)
@@ -134,6 +175,15 @@ func ensureGraphSource(s snapshot.Snapshot, r Resolved) (snapshot.Snapshot, bool
 		Doctor:  doctor,
 	}
 	return s, true, nil
+}
+
+func rateLimitFromSnapshot(s snapshot.Snapshot) msview.RateLimit {
+	return msview.RateLimit{
+		Remaining: s.Metadata.RateLimit.Remaining,
+		Reset:     s.Metadata.RateLimit.Reset,
+		Limit:     s.Metadata.RateLimit.Limit,
+		Used:      s.Metadata.RateLimit.Used,
+	}
 }
 
 func graphFromResolved(r Resolved) (*graph.Graph, error) {
