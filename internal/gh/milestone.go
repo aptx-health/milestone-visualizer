@@ -31,7 +31,7 @@ type FetchMeta struct {
 }
 
 var fixesRE = regexp.MustCompile(`(?i)\b(?:fix(?:es|ed)?|close[sd]?|resolve[sd]?)\s+#(\d+)`)
-var branchIssueRE = regexp.MustCompile(`(?i)(?:^|/)(?:agent[/-])?issue[/-]?(\d+)`)
+var branchIssueRE = regexp.MustCompile(`(?i)(?:^|/)(?:(?:agent[/-])?issue[/-]?(\d+)|(?:fix|feat|chore|docs|refactor|perf|test)/(\d+)-)`)
 
 // FindMilestone resolves a milestone title (or numeric string) to its number.
 func FindMilestone(ctx context.Context, c *github.Client, owner, repo, titleOrNum string) (int, string, error) {
@@ -167,13 +167,23 @@ func FetchMilestoneWithMeta(ctx context.Context, c *github.Client, owner, repo s
 }
 
 // BranchIssueNumber extracts the issue number encoded in a PR branch name
-// (e.g. "agent/issue-874" → 874). Returns 0 if none.
+// (e.g. "agent/issue-874" or "fix/874-description" → 874). Returns 0 if none.
 func BranchIssueNumber(branch string) int {
 	m := branchIssueRE.FindStringSubmatch(branch)
 	if len(m) < 2 {
 		return 0
 	}
-	n, _ := strconv.Atoi(m[1])
+	var issue string
+	for _, group := range m[1:] {
+		if group != "" {
+			issue = group
+			break
+		}
+	}
+	if issue == "" {
+		return 0
+	}
+	n, _ := strconv.Atoi(issue)
 	return n
 }
 
