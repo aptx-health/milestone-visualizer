@@ -31,8 +31,21 @@ type Snapshot struct {
 	MilestoneNumber    int             `json:"milestone_number"`
 	GraphSource        string          `json:"graph_source,omitempty"`
 	RateLimitRemaining int             `json:"rate_limit_remaining"`
+	Metadata           Metadata        `json:"metadata"`
 	Items              []gh.Item       `json:"items"`
 	Reports            ComputedReports `json:"reports"`
+}
+
+type Metadata struct {
+	ETags     map[string]string `json:"etags,omitempty"`
+	RateLimit RateLimitMeta     `json:"rate_limit"`
+}
+
+type RateLimitMeta struct {
+	Remaining int       `json:"remaining"`
+	Reset     time.Time `json:"reset,omitempty"`
+	Limit     int       `json:"limit,omitempty"`
+	Used      int       `json:"used,omitempty"`
 }
 
 type ComputedReports struct {
@@ -49,7 +62,7 @@ type LoadOptions struct {
 	Cached  bool
 }
 
-type FetchFunc func(context.Context) (Snapshot, error)
+type FetchFunc func(context.Context, Snapshot) (Snapshot, error)
 
 func DefaultTTL() time.Duration {
 	return 90 * time.Second
@@ -96,7 +109,8 @@ func Load(ctx context.Context, path string, opts LoadOptions, fetch FetchFunc) (
 			return s, nil
 		}
 	}
-	s, err := fetch(ctx)
+	previous, _ := read(path)
+	s, err := fetch(ctx, previous)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -125,10 +139,16 @@ func read(path string) (Snapshot, error) {
 	if s.FetchedAt.IsZero() {
 		return Snapshot{}, fmt.Errorf("snapshot missing fetched_at")
 	}
+	if s.Metadata.RateLimit.Remaining == 0 && s.RateLimitRemaining != 0 {
+		s.Metadata.RateLimit.Remaining = s.RateLimitRemaining
+	}
 	return s, nil
 }
 
 func write(path string, s Snapshot) error {
+	if s.RateLimitRemaining == 0 && s.Metadata.RateLimit.Remaining != 0 {
+		s.RateLimitRemaining = s.Metadata.RateLimit.Remaining
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}

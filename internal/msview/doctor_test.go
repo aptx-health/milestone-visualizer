@@ -2,6 +2,7 @@ package msview
 
 import (
 	"testing"
+	"time"
 
 	"github.com/aptx-health/ms-visualizer/internal/gh"
 	"github.com/aptx-health/ms-visualizer/internal/graph"
@@ -150,4 +151,40 @@ func TestDoctor_CleanReport(t *testing.T) {
 	if len(rep.Findings) != 0 {
 		t.Errorf("expected clean report, got %+v", rep.Findings)
 	}
+}
+
+func TestDoctor_RateLimitLow(t *testing.T) {
+	status := BuildStatusReport("o", "r", "M", nil)
+	status.RateLimit = RateLimit{Remaining: 100, Reset: time.Now().Add(30 * time.Minute)}
+	rep := Doctor(status, &graph.Graph{Nodes: map[int]graph.Node{}})
+
+	if !hasRule(rep, RuleRateLow) {
+		t.Fatalf("expected low rate-limit finding, got %+v", rep.Findings)
+	}
+}
+
+func TestDoctor_RateLimitBurnHigh(t *testing.T) {
+	now := time.Date(2026, 7, 10, 12, 30, 0, 0, time.UTC)
+	status := BuildStatusReport("o", "r", "M", nil)
+	status.FetchedAt = now
+	status.RateLimit = RateLimit{
+		Remaining: 1000,
+		Reset:     now.Add(30 * time.Minute),
+		Limit:     5000,
+		Used:      4000,
+	}
+	rep := Doctor(status, &graph.Graph{Nodes: map[int]graph.Node{}})
+
+	if !hasRule(rep, RuleRateBurnHigh) {
+		t.Fatalf("expected high burn-rate finding, got %+v", rep.Findings)
+	}
+}
+
+func hasRule(rep DoctorReport, rule string) bool {
+	for _, f := range rep.Findings {
+		if f.Rule == rule {
+			return true
+		}
+	}
+	return false
 }

@@ -1,8 +1,14 @@
 package gh
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"testing"
+
+	"github.com/google/go-github/v72/github"
 )
 
 func TestBranchIssueNumber(t *testing.T) {
@@ -67,5 +73,41 @@ func TestParseOwnerRepo(t *testing.T) {
 	}
 	if _, _, err := ParseOwnerRepo("nope"); err == nil {
 		t.Error("expected error on bad input")
+	}
+}
+
+func TestFetchMilestoneWithMetaFromReusesPreviousSegmentsOnNotModified(t *testing.T) {
+	requests := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.Path)
+		w.Header().Set("X-RateLimit-Remaining", "4999")
+		w.Header().Set("X-RateLimit-Reset", "1700000000")
+		w.WriteHeader(http.StatusNotModified)
+	}))
+	defer server.Close()
+
+	client := github.NewClient(server.Client())
+	baseURL, err := url.Parse(server.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.BaseURL = baseURL
+
+	previous := []Item{
+		{Number: 1, Title: "issue", State: "open"},
+		{Number: 10, Title: "pr", State: "open", IsPR: true, BranchName: "agent/issue-1"},
+	}
+	items, meta, err := FetchMilestoneWithMetaFrom(context.Background(), client, "o", "r", 1, previous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(items, previous) {
+		t.Fatalf("items = %+v, want previous %+v", items, previous)
+	}
+	if !meta.IssuesNotModified || !meta.PRsNotModified {
+		t.Fatalf("not-modified flags = issues %v prs %v", meta.IssuesNotModified, meta.PRsNotModified)
+	}
+	if len(requests) != 2 || requests[0] != "/repos/o/r/issues" || requests[1] != "/repos/o/r/pulls" {
+		t.Fatalf("requests = %v, want issues then pulls", requests)
 	}
 }

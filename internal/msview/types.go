@@ -56,9 +56,17 @@ type StatusReport struct {
 	Repo      string      `json:"repo"`
 	Milestone string      `json:"milestone"`
 	FetchedAt time.Time   `json:"fetched_at"`
+	RateLimit RateLimit   `json:"rate_limit"`
 	Summary   Summary     `json:"summary"`
 	Issues    []IssueView `json:"issues"`
 	Orphans   []PRLink    `json:"orphans"`
+}
+
+type RateLimit struct {
+	Remaining int       `json:"remaining"`
+	Reset     time.Time `json:"reset,omitempty"`
+	Limit     int       `json:"limit,omitempty"`
+	Used      int       `json:"used,omitempty"`
 }
 
 // Summary is the top-line count block.
