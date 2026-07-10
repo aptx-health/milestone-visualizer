@@ -2,9 +2,7 @@ package gh
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -30,13 +28,10 @@ type Item struct {
 
 // FetchMeta carries metadata from the API responses used to build a fetch.
 type FetchMeta struct {
-	RateLimitRemaining int               `json:"rate_limit_remaining"`
-	RateLimitReset     time.Time         `json:"rate_limit_reset,omitempty"`
-	RateLimitLimit     int               `json:"rate_limit_limit,omitempty"`
-	RateLimitUsed      int               `json:"rate_limit_used,omitempty"`
-	ETags              map[string]string `json:"etags,omitempty"`
-	IssuesNotModified  bool              `json:"issues_not_modified,omitempty"`
-	PRsNotModified     bool              `json:"prs_not_modified,omitempty"`
+	RateLimitRemaining int       `json:"rate_limit_remaining"`
+	RateLimitReset     time.Time `json:"rate_limit_reset,omitempty"`
+	RateLimitLimit     int       `json:"rate_limit_limit,omitempty"`
+	RateLimitUsed      int       `json:"rate_limit_used,omitempty"`
 }
 
 var fixesRE = regexp.MustCompile(`(?i)\b(?:fix(?:es|ed)?|close[sd]?|resolve[sd]?)\s+#(\d+)`)
@@ -81,13 +76,12 @@ func FetchMilestone(ctx context.Context, c *github.Client, owner, repo string, m
 
 // FetchMilestoneWithMeta is FetchMilestone plus API metadata useful for
 // freshness and cost-aware consumers.
+//
+// Conditional-request caching is handled transparently by the client's
+// transport (see NewClientWithCache): a 304 Not Modified is replayed from the
+// cached body before it reaches this function, so pagination and PR relevance
+// are always computed against complete, current data.
 func FetchMilestoneWithMeta(ctx context.Context, c *github.Client, owner, repo string, msNum int) ([]Item, FetchMeta, error) {
-	return FetchMilestoneWithMetaFrom(ctx, c, owner, repo, msNum, nil)
-}
-
-// FetchMilestoneWithMetaFrom fetches the milestone data, reusing previous
-// segment data when GitHub returns 304 Not Modified for a conditional request.
-func FetchMilestoneWithMetaFrom(ctx context.Context, c *github.Client, owner, repo string, msNum int, previous []Item) ([]Item, FetchMeta, error) {
 	issueSet := map[int]bool{}
 	items := []Item{}
 	meta := FetchMeta{RateLimitRemaining: -1}
@@ -100,13 +94,6 @@ func FetchMilestoneWithMetaFrom(ctx context.Context, c *github.Client, owner, re
 	for {
 		issues, resp, err := c.Issues.ListByRepo(ctx, owner, repo, iopt)
 		if err != nil {
-			if isNotModified(err) {
-				meta.IssuesNotModified = true
-				prevIssues, prevSet := previousIssues(previous)
-				items = append(items, prevIssues...)
-				issueSet = prevSet
-				break
-			}
 			return nil, meta, fmt.Errorf("list issues: %w", err)
 		}
 		updateRateMeta(&meta, resp)
@@ -142,11 +129,6 @@ func FetchMilestoneWithMetaFrom(ctx context.Context, c *github.Client, owner, re
 	for seenPRs < maxPRScan {
 		prs, resp, err := c.PullRequests.List(ctx, owner, repo, popt)
 		if err != nil {
-			if isNotModified(err) {
-				meta.PRsNotModified = true
-				items = append(items, previousPRs(previous)...)
-				break
-			}
 			return nil, meta, fmt.Errorf("list prs: %w", err)
 		}
 		updateRateMeta(&meta, resp)
@@ -201,34 +183,6 @@ func updateRateMeta(meta *FetchMeta, resp *github.Response) {
 	meta.RateLimitReset = resp.Rate.Reset.Time
 	meta.RateLimitLimit = resp.Rate.Limit
 	meta.RateLimitUsed = resp.Rate.Used
-}
-
-func isNotModified(err error) bool {
-	var er *github.ErrorResponse
-	return errors.As(err, &er) && er.Response != nil && er.Response.StatusCode == http.StatusNotModified
-}
-
-func previousIssues(items []Item) ([]Item, map[int]bool) {
-	out := []Item{}
-	set := map[int]bool{}
-	for _, item := range items {
-		if item.IsPR {
-			continue
-		}
-		out = append(out, item)
-		set[item.Number] = true
-	}
-	return out, set
-}
-
-func previousPRs(items []Item) []Item {
-	out := []Item{}
-	for _, item := range items {
-		if item.IsPR {
-			out = append(out, item)
-		}
-	}
-	return out
 }
 
 // BranchIssueNumber extracts the issue number encoded in a PR branch name

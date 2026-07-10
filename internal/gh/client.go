@@ -1,8 +1,10 @@
 package gh
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -17,23 +19,45 @@ import (
 // NewClient returns an authenticated GitHub client.
 // Auth precedence: GITHUB_TOKEN env, then `gh auth token`.
 func NewClient(ctx context.Context) (*github.Client, error) {
-	client, _, err := NewClientWithETags(ctx, nil)
+	client, _, err := NewClientWithCache(ctx, nil)
 	return client, err
 }
 
-// ConditionalCache tracks ETags and rate-limit metadata observed by a client.
+// ResponseCacheEntry is a persisted conditional-request cache record. It holds
+// everything needed to replay a prior 200 response when GitHub answers a
+// conditional request with 304 Not Modified: the validator (ETag), the body,
+// and the pagination/parse headers go-github relies on.
+type ResponseCacheEntry struct {
+	ETag        string `json:"etag"`
+	Body        []byte `json:"body"` // JSON-encoded as base64
+	ContentType string `json:"content_type,omitempty"`
+	Link        string `json:"link,omitempty"` // RFC 5988 Link header for pagination
+}
+
+// ConditionalCache stores per-URL response entries and the most recent
+// rate-limit metadata observed by a client. It is safe for concurrent use.
 type ConditionalCache struct {
 	mu                 sync.Mutex
-	etags              map[string]string
+	entries            map[string]ResponseCacheEntry
 	rateLimitRemaining int
 	rateLimitReset     time.Time
 	rateLimitLimit     int
 	rateLimitUsed      int
 }
 
-// NewClientWithETags returns an authenticated GitHub client that sends
-// If-None-Match for URLs present in etags and records fresh ETags from GitHub.
-func NewClientWithETags(ctx context.Context, etags map[string]string) (*github.Client, *ConditionalCache, error) {
+var rateHeaders = []string{
+	"X-RateLimit-Remaining",
+	"X-RateLimit-Reset",
+	"X-RateLimit-Limit",
+	"X-RateLimit-Used",
+}
+
+// NewClientWithCache returns an authenticated GitHub client backed by a
+// response cache. For any GET whose URL is present in the cache the client
+// sends If-None-Match; a 304 is replayed transparently from the cached body
+// (headers and all) so callers — including go-github's pagination — never see
+// the 304. Fresh 200 responses are recorded back into the cache.
+func NewClientWithCache(ctx context.Context, entries map[string]ResponseCacheEntry) (*github.Client, *ConditionalCache, error) {
 	tok := strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
 	if tok == "" {
 		out, err := exec.Command("gh", "auth", "token").Output()
@@ -45,7 +69,7 @@ func NewClientWithETags(ctx context.Context, etags map[string]string) (*github.C
 	if tok == "" {
 		return nil, nil, fmt.Errorf("could not resolve GitHub token")
 	}
-	cache := NewConditionalCache(etags)
+	cache := NewConditionalCache(entries)
 	src := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: tok})
 	httpClient := oauth2.NewClient(ctx, src)
 	httpClient.Transport = &conditionalTransport{
@@ -55,25 +79,28 @@ func NewClientWithETags(ctx context.Context, etags map[string]string) (*github.C
 	return github.NewClient(httpClient), cache, nil
 }
 
-func NewConditionalCache(etags map[string]string) *ConditionalCache {
-	cp := map[string]string{}
-	for k, v := range etags {
-		if strings.TrimSpace(v) != "" {
-			cp[k] = v
+func NewConditionalCache(entries map[string]ResponseCacheEntry) *ConditionalCache {
+	cp := map[string]ResponseCacheEntry{}
+	for k, v := range entries {
+		if strings.TrimSpace(v.ETag) == "" || len(v.Body) == 0 {
+			continue
 		}
+		cp[k] = cloneEntry(v)
 	}
 	return &ConditionalCache{
-		etags:              cp,
+		entries:            cp,
 		rateLimitRemaining: -1,
 	}
 }
 
-func (c *ConditionalCache) ETags() map[string]string {
+// Entries returns a deep copy of the cached response entries, suitable for
+// persisting alongside the snapshot.
+func (c *ConditionalCache) Entries() map[string]ResponseCacheEntry {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	cp := map[string]string{}
-	for k, v := range c.etags {
-		cp[k] = v
+	cp := map[string]ResponseCacheEntry{}
+	for k, v := range c.entries {
+		cp[k] = cloneEntry(v)
 	}
 	return cp
 }
@@ -84,42 +111,31 @@ func (c *ConditionalCache) RateLimit() (remaining int, reset time.Time, limit in
 	return c.rateLimitRemaining, c.rateLimitReset, c.rateLimitLimit, c.rateLimitUsed
 }
 
-type conditionalTransport struct {
-	base  http.RoundTripper
-	cache *ConditionalCache
-}
-
-func (t *conditionalTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	base := t.base
-	if base == nil {
-		base = http.DefaultTransport
-	}
-	key := cacheKey(req)
-	if req.Method == http.MethodGet && key != "" {
-		if etag := t.cache.etag(key); etag != "" {
-			req = req.Clone(req.Context())
-			req.Header.Set("If-None-Match", etag)
-		}
-	}
-	resp, err := base.RoundTrip(req)
-	if resp != nil && key != "" {
-		t.cache.record(key, resp)
-	}
-	return resp, err
-}
-
-func (c *ConditionalCache) etag(key string) string {
+func (c *ConditionalCache) entry(key string) (ResponseCacheEntry, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.etags[key]
+	e, ok := c.entries[key]
+	if !ok {
+		return ResponseCacheEntry{}, false
+	}
+	return cloneEntry(e), true
 }
 
-func (c *ConditionalCache) record(key string, resp *http.Response) {
+func (c *ConditionalCache) putEntry(key string, e ResponseCacheEntry) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if etag := strings.TrimSpace(resp.Header.Get("ETag")); etag != "" {
-		c.etags[key] = etag
-	}
+	c.entries[key] = cloneEntry(e)
+}
+
+func (c *ConditionalCache) deleteEntry(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.entries, key)
+}
+
+func (c *ConditionalCache) recordRate(resp *http.Response) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if remaining, ok := parseIntHeader(resp.Header.Get("X-RateLimit-Remaining")); ok {
 		c.rateLimitRemaining = remaining
 	}
@@ -132,6 +148,116 @@ func (c *ConditionalCache) record(key string, resp *http.Response) {
 	if used, ok := parseIntHeader(resp.Header.Get("X-RateLimit-Used")); ok {
 		c.rateLimitUsed = used
 	}
+}
+
+func cloneEntry(e ResponseCacheEntry) ResponseCacheEntry {
+	e.Body = append([]byte(nil), e.Body...)
+	return e
+}
+
+type conditionalTransport struct {
+	base  http.RoundTripper
+	cache *ConditionalCache
+}
+
+func (t *conditionalTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	key := ""
+	if req.Method == http.MethodGet {
+		key = cacheKey(req)
+	}
+
+	var stored ResponseCacheEntry
+	conditional := false
+	if key != "" {
+		if e, ok := t.cache.entry(key); ok {
+			stored = e
+			conditional = true
+			req = req.Clone(req.Context())
+			req.Header.Set("If-None-Match", e.ETag)
+		}
+	}
+
+	resp, err := base.RoundTrip(req)
+	if err != nil || resp == nil {
+		return resp, err
+	}
+	// Record rate metadata from the real response — a 304 still carries a
+	// fresh (and cost-free) budget snapshot.
+	t.cache.recordRate(resp)
+
+	if key == "" {
+		return resp, nil
+	}
+	if conditional && resp.StatusCode == http.StatusNotModified {
+		return replayResponse(req, resp, stored), nil
+	}
+	if resp.StatusCode == http.StatusOK {
+		return t.storeResponse(key, resp)
+	}
+	return resp, nil
+}
+
+// replayResponse rebuilds a 200 response from a cached entry, carrying the live
+// rate-limit headers from the 304 so callers see the current budget. Only cached
+// entries (which always have an ETag and body) reach here.
+func replayResponse(req *http.Request, orig *http.Response, e ResponseCacheEntry) *http.Response {
+	if orig.Body != nil {
+		_, _ = io.Copy(io.Discard, orig.Body)
+		_ = orig.Body.Close()
+	}
+	header := make(http.Header)
+	if e.ContentType != "" {
+		header.Set("Content-Type", e.ContentType)
+	}
+	if e.Link != "" {
+		header.Set("Link", e.Link)
+	}
+	if e.ETag != "" {
+		header.Set("ETag", e.ETag)
+	}
+	for _, h := range rateHeaders {
+		if v := orig.Header.Get(h); v != "" {
+			header.Set(h, v)
+		}
+	}
+	body := append([]byte(nil), e.Body...)
+	return &http.Response{
+		Status:        "200 OK",
+		StatusCode:    http.StatusOK,
+		Proto:         orig.Proto,
+		ProtoMajor:    orig.ProtoMajor,
+		ProtoMinor:    orig.ProtoMinor,
+		Header:        header,
+		Body:          io.NopCloser(bytes.NewReader(body)),
+		ContentLength: int64(len(body)),
+		Request:       req,
+	}
+}
+
+// storeResponse buffers the body so it can be cached and still consumed by the
+// caller, then records the entry (only when an ETag is present to validate it).
+func (t *conditionalTransport) storeResponse(key string, resp *http.Response) (*http.Response, error) {
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	if etag := strings.TrimSpace(resp.Header.Get("ETag")); etag != "" {
+		t.cache.putEntry(key, ResponseCacheEntry{
+			ETag:        etag,
+			Body:        body,
+			ContentType: resp.Header.Get("Content-Type"),
+			Link:        resp.Header.Get("Link"),
+		})
+	} else {
+		t.cache.deleteEntry(key)
+	}
+	return resp, nil
 }
 
 func cacheKey(req *http.Request) string {

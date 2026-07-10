@@ -2,13 +2,11 @@ package gh
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"reflect"
 	"testing"
-
-	"github.com/google/go-github/v72/github"
 )
 
 func TestBranchIssueNumber(t *testing.T) {
@@ -76,38 +74,161 @@ func TestParseOwnerRepo(t *testing.T) {
 	}
 }
 
-func TestFetchMilestoneWithMetaFromReusesPreviousSegmentsOnNotModified(t *testing.T) {
-	requests := []string{}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests = append(requests, r.URL.Path)
-		w.Header().Set("X-RateLimit-Remaining", "4999")
-		w.Header().Set("X-RateLimit-Reset", "1700000000")
+// serveConditional writes body honoring If-None-Match, returning 304 when the
+// client's ETag still matches (mirroring GitHub's conditional-request behavior).
+func serveConditional(w http.ResponseWriter, r *http.Request, etag, link, body string) {
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-RateLimit-Remaining", "4999")
+	if link != "" {
+		w.Header().Set("Link", link)
+	}
+	if r.Header.Get("If-None-Match") == etag {
 		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.WriteString(w, body)
+}
+
+func titleByNumber(items []Item, number int) (string, bool) {
+	for _, it := range items {
+		if it.Number == number {
+			return it.Title, true
+		}
+	}
+	return "", false
+}
+
+// TestFetchMilestone_MultiPage304PicksUpLaterPageChanges guards the core
+// conditional-request correctness property: a 304 on page 1 must NOT mask
+// changes on page 2. ETags are per-page, so page 1 can be unchanged while a
+// later page is not — the transport replays page 1 from cache and still fetches
+// the changed page 2.
+func TestFetchMilestone_MultiPage304PicksUpLaterPageChanges(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "test-token")
+
+	// Mutable page-2 content so the second run can change it.
+	page2ETag := `"issues-p2-a"`
+	page2Body := `[{"number":2,"title":"two","state":"open"}]`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/repos/o/r/issues" && r.URL.Query().Get("page") == "":
+			link := `<http://` + r.Host + `/repos/o/r/issues?milestone=1&state=all&per_page=100&page=2>; rel="next"`
+			serveConditional(w, r, `"issues-p1"`, link, `[{"number":1,"title":"one","state":"open"}]`)
+		case r.URL.Path == "/repos/o/r/issues" && r.URL.Query().Get("page") == "2":
+			serveConditional(w, r, page2ETag, "", page2Body)
+		case r.URL.Path == "/repos/o/r/pulls":
+			serveConditional(w, r, `"pulls-p1"`, "", `[]`)
+		default:
+			t.Errorf("unexpected request %s?%s", r.URL.Path, r.URL.RawQuery)
+			w.WriteHeader(http.StatusNotFound)
+		}
 	}))
 	defer server.Close()
 
-	client := github.NewClient(server.Client())
-	baseURL, err := url.Parse(server.URL + "/")
-	if err != nil {
-		t.Fatal(err)
+	newClient := func(cache map[string]ResponseCacheEntry) (*ConditionalCache, func() []Item) {
+		client, cc, err := NewClientWithCache(context.Background(), cache)
+		if err != nil {
+			t.Fatal(err)
+		}
+		client.BaseURL, _ = client.BaseURL.Parse(server.URL + "/")
+		return cc, func() []Item {
+			items, _, err := FetchMilestoneWithMeta(context.Background(), client, "o", "r", 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return items
+		}
 	}
-	client.BaseURL = baseURL
 
-	previous := []Item{
-		{Number: 1, Title: "issue", State: "open"},
-		{Number: 10, Title: "pr", State: "open", IsPR: true, BranchName: "agent/issue-1"},
+	// Run 1 populates the cache with both pages.
+	cc1, fetch1 := newClient(nil)
+	items1 := fetch1()
+	if _, ok := titleByNumber(items1, 2); !ok {
+		t.Fatalf("run 1 missing page-2 issue: %+v", items1)
 	}
-	items, meta, err := FetchMilestoneWithMetaFrom(context.Background(), client, "o", "r", 1, previous)
-	if err != nil {
-		t.Fatal(err)
+
+	// Run 2: page 1 is unchanged (304, replayed) but page 2's content changed.
+	page2ETag = `"issues-p2-b"`
+	page2Body = `[{"number":2,"title":"two-updated","state":"open"}]`
+
+	_, fetch2 := newClient(cc1.Entries())
+	items2 := fetch2()
+	if _, ok := titleByNumber(items2, 1); !ok {
+		t.Fatalf("run 2 dropped page-1 issue (304 replay failed): %+v", items2)
 	}
-	if !reflect.DeepEqual(items, previous) {
-		t.Fatalf("items = %+v, want previous %+v", items, previous)
+	title, ok := titleByNumber(items2, 2)
+	if !ok || title != "two-updated" {
+		t.Fatalf("run 2 page-2 title = %q ok=%v, want the updated value", title, ok)
 	}
-	if !meta.IssuesNotModified || !meta.PRsNotModified {
-		t.Fatalf("not-modified flags = issues %v prs %v", meta.IssuesNotModified, meta.PRsNotModified)
+}
+
+// TestFetchMilestone_PRRelevanceRecomputedOn304 guards the dependent-cache
+// property: PR relevance depends on the current milestone issue set. When the
+// PR list is unchanged (304) but an issue is removed, the replayed PR bodies
+// must be re-evaluated so a PR linked only to the removed issue drops out.
+func TestFetchMilestone_PRRelevanceRecomputedOn304(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "test-token")
+
+	issuesETag := `"issues-a"`
+	issuesBody := `[{"number":1,"title":"one","state":"open"},{"number":2,"title":"two","state":"open"}]`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/o/r/issues":
+			serveConditional(w, r, issuesETag, "", issuesBody)
+		case "/repos/o/r/pulls":
+			serveConditional(w, r, `"pulls-a"`, "",
+				`[{"number":10,"title":"pr","state":"open","body":"Fixes #2","head":{"ref":"feature"}}]`)
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	newClient := func(cache map[string]ResponseCacheEntry) (*ConditionalCache, func() []Item) {
+		client, cc, err := NewClientWithCache(context.Background(), cache)
+		if err != nil {
+			t.Fatal(err)
+		}
+		client.BaseURL, _ = client.BaseURL.Parse(server.URL + "/")
+		return cc, func() []Item {
+			items, _, err := FetchMilestoneWithMeta(context.Background(), client, "o", "r", 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return items
+		}
 	}
-	if len(requests) != 2 || requests[0] != "/repos/o/r/issues" || requests[1] != "/repos/o/r/pulls" {
-		t.Fatalf("requests = %v, want issues then pulls", requests)
+
+	// Run 1: PR #10 (Fixes #2) is relevant because issue #2 is present.
+	cc1, fetch1 := newClient(nil)
+	items1 := fetch1()
+	if _, ok := titleByNumber(items1, 10); !ok {
+		t.Fatalf("run 1 should include PR #10: %+v", items1)
 	}
+
+	// Run 2: issue #2 is removed (issues change → 200); PR list unchanged (304).
+	issuesETag = `"issues-b"`
+	issuesBody = `[{"number":1,"title":"one","state":"open"}]`
+
+	_, fetch2 := newClient(cc1.Entries())
+	items2 := fetch2()
+	if _, ok := titleByNumber(items2, 10); ok {
+		t.Fatalf("run 2 should drop PR #10 after issue #2 removed: %+v", items2)
+	}
+	if !reflect.DeepEqual(itemNumbers(items2), []int{1}) {
+		t.Fatalf("run 2 items = %v, want just issue #1", itemNumbers(items2))
+	}
+}
+
+func itemNumbers(items []Item) []int {
+	out := []int{}
+	for _, it := range items {
+		out = append(out, it.Number)
+	}
+	return out
 }

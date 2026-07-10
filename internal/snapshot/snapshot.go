@@ -37,8 +37,10 @@ type Snapshot struct {
 }
 
 type Metadata struct {
-	ETags     map[string]string `json:"etags,omitempty"`
-	RateLimit RateLimitMeta     `json:"rate_limit"`
+	// HTTPCache holds per-URL conditional-request entries (ETag + cached body)
+	// so a later fetch can send If-None-Match and replay a 304 for free.
+	HTTPCache map[string]gh.ResponseCacheEntry `json:"http_cache,omitempty"`
+	RateLimit RateLimitMeta                     `json:"rate_limit"`
 }
 
 type RateLimitMeta struct {

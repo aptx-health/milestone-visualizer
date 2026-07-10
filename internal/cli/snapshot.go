@@ -72,7 +72,7 @@ func hydrateSnapshotReports(s snapshot.Snapshot) (snapshot.Snapshot, bool) {
 }
 
 func fetchSnapshot(ctx context.Context, owner, repo string, r Resolved, previous snapshot.Snapshot) (snapshot.Snapshot, error) {
-	client, cache, err := gh.NewClientWithETags(ctx, previous.Metadata.ETags)
+	client, cache, err := gh.NewClientWithCache(ctx, previous.Metadata.HTTPCache)
 	if err != nil {
 		return snapshot.Snapshot{}, err
 	}
@@ -84,7 +84,7 @@ func fetchSnapshot(ctx context.Context, owner, repo string, r Resolved, previous
 			return snapshot.Snapshot{}, err
 		}
 	}
-	items, meta, err := gh.FetchMilestoneWithMetaFrom(ctx, client, owner, repo, msNum, previous.Items)
+	items, meta, err := gh.FetchMilestoneWithMeta(ctx, client, owner, repo, msNum)
 	if err != nil {
 		return snapshot.Snapshot{}, err
 	}
@@ -94,7 +94,6 @@ func fetchSnapshot(ctx context.Context, owner, repo string, r Resolved, previous
 		meta.RateLimitLimit = limit
 		meta.RateLimitUsed = used
 	}
-	meta.ETags = cache.ETags()
 
 	fetchedAt := time.Now().UTC()
 	status := msview.BuildStatusReport(owner, repo, msTitle, items)
@@ -129,7 +128,7 @@ func fetchSnapshot(ctx context.Context, owner, repo string, r Resolved, previous
 		GraphSource:        graphSource,
 		RateLimitRemaining: meta.RateLimitRemaining,
 		Metadata: snapshot.Metadata{
-			ETags: meta.ETags,
+			HTTPCache: cache.Entries(),
 			RateLimit: snapshot.RateLimitMeta{
 				Remaining: meta.RateLimitRemaining,
 				Reset:     meta.RateLimitReset,
