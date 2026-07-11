@@ -10,37 +10,23 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
-	"github.com/aptx-health/ms-visualizer/internal/config"
 	"github.com/aptx-health/ms-visualizer/internal/gh"
 )
 
 func newMilestonesCmd() *cobra.Command {
 	var state string
 	var asJSON bool
-	var ownerRepo string
 	cmd := &cobra.Command{
 		Use:   "milestones [<owner>/<repo>]",
 		Short: "List a repo's milestones with open/closed issue counts",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			if len(args) > 0 {
-				ownerRepo = args[0]
+			r, err := resolveRepo(cmd, args)
+			if err != nil {
+				return err
 			}
-			// Check config if no positional provided
-			if ownerRepo == "" {
-				cfgPath, _ := cmd.Root().PersistentFlags().GetString("config")
-				c, _, err := config.Load(cfgPath)
-				if err == nil {
-					if c.OwnerRepo() != "" {
-						ownerRepo = c.OwnerRepo()
-					}
-				}
-			}
-			if ownerRepo == "" {
-				return fmt.Errorf("owner/repo not provided: pass as positional arg or set owner+repo in .msv.yaml")
-			}
-			owner, repo, err := gh.ParseOwnerRepo(ownerRepo)
+			owner, repo, err := gh.ParseOwnerRepo(r.OwnerRepo)
 			if err != nil {
 				return err
 			}

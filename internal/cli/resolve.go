@@ -49,3 +49,30 @@ func resolve(cmd *cobra.Command, argv []string, flagMilestone, flagGraphFile str
 		GraphFile: merged.GraphFile,
 	}, nil
 }
+
+// resolveRepo is like resolve() but without requiring a milestone.
+func resolveRepo(cmd *cobra.Command, argv []string) (Resolved, error) {
+	cfgPath, _ := cmd.Root().PersistentFlags().GetString("config")
+	c, _, err := config.Load(cfgPath)
+	if err != nil {
+		return Resolved{}, err
+	}
+
+	var argOwnerRepo string
+	if len(argv) > 0 {
+		argOwnerRepo = argv[0]
+	}
+	merged := c.Merge(config.Overrides{
+		OwnerRepo: argOwnerRepo,
+	})
+
+	if merged.OwnerRepo() == "" {
+		return Resolved{}, fmt.Errorf("owner/repo not provided: pass as positional arg or set owner+repo in .msv.yaml")
+	}
+	return Resolved{
+		Config:    merged,
+		OwnerRepo: merged.OwnerRepo(),
+		Milestone: merged.Milestone,
+		GraphFile: merged.GraphFile,
+	}, nil
+}
