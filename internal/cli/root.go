@@ -24,6 +24,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newBlockedCmd())
 	root.AddCommand(newOrphansCmd())
 	root.AddCommand(newDoctorCmd())
+	root.AddCommand(newMilestonesCmd())
 	mutate := newGraphMutateGroup()
 	mutate.PersistentFlags().StringP("file", "f", "", "graph markdown file (or set graph_file in .msv.yaml)")
 	root.AddCommand(mutate)

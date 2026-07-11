@@ -35,7 +35,7 @@ type FetchMeta struct {
 }
 
 var fixesRE = regexp.MustCompile(`(?i)\b(?:fix(?:es|ed)?|close[sd]?|resolve[sd]?)\s+#(\d+)`)
-var branchIssueRE = regexp.MustCompile(`(?i)(?:^|/)(?:(?:agent[/-])?issue[/-]?(\d+)|(?:fix|feat|chore|docs|refactor|perf|test)/(\d+)-)`)
+var branchIssueRE = regexp.MustCompile(`(?i)(?:^|/)(?:(?:agent[/-])?issue[/-]?(\d+)|(?:fix|feat|chore|docs|refactor|perf|test)(?:e)?/(?:issue-)?(\d+)(?:-|$))`)
 
 // FindMilestone resolves a milestone title (or numeric string) to its number.
 func FindMilestone(ctx context.Context, c *github.Client, owner, repo, titleOrNum string) (int, string, error) {
@@ -235,4 +235,59 @@ func assigneeLogins(users []*github.User) []string {
 		out = append(out, u.GetLogin())
 	}
 	return out
+}
+
+// MilestoneInfo carries summary data about a milestone.
+//
+// JSON output follows a stable contract: the field names and types here
+// are the public API surface for consumers of the milestones JSON array.
+// Change with care.
+type MilestoneInfo struct {
+	Number       int     `json:"number"`
+	Title        string  `json:"title"`
+	State        string  `json:"state"`
+	OpenIssues   int     `json:"open_issues"`
+	ClosedIssues int     `json:"closed_issues"`
+	DueOn        *string `json:"due_on,omitempty"`
+	Description  string  `json:"description,omitempty"`
+}
+
+// ListMilestones fetches all milestones for a given owner/repo, paginating
+// if the API returns fewer results than perPage.
+func ListMilestones(ctx context.Context, c *github.Client, owner, repo, state string) ([]MilestoneInfo, error) {
+	if state == "" {
+		state = "all"
+	}
+	var out []MilestoneInfo
+	opt := &github.MilestoneListOptions{
+		State:       state,
+		Direction:   "asc",
+		ListOptions: github.ListOptions{PerPage: 100},
+	}
+	for {
+		list, resp, err := c.Issues.ListMilestones(ctx, owner, repo, opt)
+		if err != nil {
+			return nil, fmt.Errorf("list milestones: %w", err)
+		}
+		for _, m := range list {
+			info := MilestoneInfo{
+				Number:       m.GetNumber(),
+				Title:        m.GetTitle(),
+				State:        m.GetState(),
+				OpenIssues:   m.GetOpenIssues(),
+				ClosedIssues: m.GetClosedIssues(),
+				Description:  m.GetDescription(),
+			}
+			if m.DueOn != nil {
+				d := m.DueOn.Time.Format(time.RFC3339)
+				info.DueOn = &d
+			}
+			out = append(out, info)
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opt.ListOptions.Page = resp.NextPage
+	}
+	return out, nil
 }
